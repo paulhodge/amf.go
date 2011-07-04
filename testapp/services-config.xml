@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services-config>
+  <services>
+    <service id="amfgo-flashremoting-service"
+                 class="flex.messaging.services.RemotingService"
+                 messageTypes="flex.messaging.messages.RemotingMessage">
+            <destination id="amfgo">
+                <channels>
+                    <channel ref="my-amfgo"/>
+                </channels>
+                <properties>
+                    <source>*</source>
+                </properties>
+            </destination>
+        </service>
+    </services>
+
+    <channels>
+        <channel-definition id="my-amfgo" class="mx.messaging.channels.AMFChannel">
+            <endpoint uri="http://localhost:8080" class="flex.messaging.endpoints.AMFEndpoint"/>
+        </channel-definition>
+    </channels>
+</services-config>

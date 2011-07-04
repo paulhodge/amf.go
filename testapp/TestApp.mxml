@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:Application xmlns:mx="http://www.adobe.com/2006/mxml" layout="absolute">
+  <mx:RemoteObject id="amfService" fault="faultHandler(event)" showBusyCursor="true" source="node" destination="amfgo">
+        <mx:method name="load" result="resultHandler(event)" />
+    </mx:RemoteObject>
+  <mx:Script>
+    <![CDATA[
+        import mx.rpc.remoting.RemoteObject;
+        import mx.rpc.events.ResultEvent;
+        import mx.rpc.events.FaultEvent;
+
+        [Bindable]
+        public var resObject:Object;
+
+        public function resultHandler(event:ResultEvent):void {
+         // Do something
+            resObject = event.result;
+            result_text.text = "Success! The title of your node is: " + event.result.title;
+        }
+
+        public function faultHandler (event:FaultEvent):void {
+         // Deal with event.faultstring, etc.
+            result_text.text = "fault: " + event.fault.toString();
+        }
+    ]]>
+</mx:Script>
+<mx:Button x="250" y="157" label="nodeLoad" click="amfService.getOperation('load').send(1);"/>
+<mx:TextArea x="10" y="36" width="319" height="113" id="result_text"/>
+<mx:Label x="10" y="10" text="Result:"/>
+</mx:Application>

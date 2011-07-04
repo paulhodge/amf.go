@@ -13,6 +13,9 @@ import (
 const _AMF0 = 0
 const _AMF3 = 0
 
+// For in-progress code:
+func unused(... interface{}) { }
+
 // Interface for the local Reader. This is implemented by Reader
 type Reader interface {
     Read(p []byte) (n int, err os.Error)
@@ -49,13 +52,34 @@ type DecodeError struct {
 }
 
 type DecodeResult struct {
-    headers map[string]string
+    headers []AmfHeader
     body map[string]string
 }
 
 type DecodeContext struct {
     amfVersion uint16
     useAmf3 bool
+
+    stringTable []string
+    classTable []AvmClass
+    objectTable []AvmObject
+}
+
+type AmfHeader struct {
+    name string
+    mustUnderstand bool
+    value interface{}
+}
+
+type AvmObject struct {
+    class *AvmClass
+}
+
+type AvmClass struct {
+    name string
+    externalizable bool
+    dynamic bool
+    properties []string
 }
 
 // Helper functions.
@@ -96,13 +120,132 @@ func readStringLength(stream Reader, length int) string {
     stream.Read(data)
     return string(data)
 }
+
+// Read a 29-bit compact encoded integer (as defined in AVM3)
+func readUint29(stream Reader) (uint32, os.Error) {
+    var result uint32 = 0
+    for i := 0; i < 4; i++ {
+        b, err := readByte(stream)
+
+        if err != nil {
+            return result, err
+        }
+
+        result = (result << 7) + (uint32(b) & 0x7f)
+
+        if (b & 0x80) == 0 {
+            break
+        }
+    }
+    return result, nil
+}
+
+func readStringAmf3(stream Reader, cxt *DecodeContext) (string, os.Error) {
+    ref,_ := readUint29(stream)
+
+    // Check the low bit to see if this is a reference
+    if (ref & 1) == 0 {
+        return cxt.stringTable[int(ref>>1)],nil
+    }
+
+    length := int(ref >> 1)
+
+    if (length == 0) {
+        return "", nil
+    }
+
+    str := readStringLength(stream, length)
+
+    cxt.stringTable = append(cxt.stringTable, str)
+
+    return str, nil
+}
+
+func readObjectAmf3(stream Reader, cxt *DecodeContext) (*AvmObject, os.Error) {
+
+    ref,_ := readUint29(stream)
+
+    fmt.Printf("in readObjectAmf3, parsed ref: %d\n", ref)
+
+    // Check the low bit to see if this is a reference
+    if (ref & 1) == 0 {
+        return &cxt.objectTable[int(ref >> 1)], nil
+    }
+
+    class := readClassDefinitionAmf3(stream, ref, cxt)
+
+    return &result,nil
+}
+
+func readClassDefinitionAmf3(stream Reader, ref uint32, cxt *DecodeContext) *AmvClass {
+
+    // Check for a reference to an existing class definition
+    if (ref & 2) == 0 {
+        return &cxt.objectTable[int(ref >> 2)], nil
+    }
+
+    // Parse a class definition
+    className,_ := readStringAmf3(stream, cxt)
+    fmt.Printf("read className = %s\n", className)
+
+    externalizable := ref & 4 != 0
+    dynamic := ref & 8 != 0
+    propertyCount := ref >> 4
+
+    unused(externalizable, dynamic)
+
+    fmt.Printf("read propertyCount = %d\n", propertyCount)
+
+    class := AvmClass{className, externalizable, dynamic, make([]string, propertyCount)}
+
+    // Property names
+    for i := 0; i < propertyCount; i++ {
+        class.properties[i] = readStringAmf3(stream, cxt)
+    }
+
+    return &class
+}
+
+func readArrayAmf3(stream Reader, cxt *DecodeContext) (interface{}, os.Error) {
+    ref,_ := readUint29(stream)
+
+    fmt.Printf("readArrayAmf3 read ref: %d\n", ref)
+
+    // Check the low bit to see if this is a reference
+    if (ref & 1) == 0 {
+        return &cxt.objectTable[int(ref >> 1)], nil
+    }
+
+    size := int(ref >> 1)
+
+    fmt.Printf("readArrayAmf3 read size: %d", size)
+
+    key,_ := readStringAmf3(stream, cxt)
+
+    if key == "" {
+        // No key, the whole array is dense.
+        result := make([]interface{}, size)
+
+        for i := 0; i < size; i++ {
+            result[size] = readValueAmf3(stream, cxt)
+        }
+        return result, nil
+    }
+
+    // There are keys, return a mixed array.
+
+
+    unused(size)
+
+    return nil,nil
+
+}
+
 func peekByte(stream Reader) uint8 {
     buf, _ := stream.Peek(1)
     return buf[0]
 }
 
-func unused(... interface{}) {
-}
 
 func decode(stream Reader) (*DecodeResult, *DecodeError) {
 
@@ -125,19 +268,24 @@ func decode(stream Reader) (*DecodeResult, *DecodeError) {
     fmt.Printf("headerCount = %d\n", headerCount)
 
     // Read headers
+    result.headers = make([]AmfHeader, headerCount)
     for i := 0; i < int(headerCount); i++ {
         name := readString(stream)
-        required := readUint8(stream)
+        mustUnderstand := readUint8(stream) != 0
         messageLength := readUint32(stream)
+        unused(messageLength)
 
         // Check for AMF3 type marker
         if (cxt.amfVersion == _AMF3) {
-            // TODO
+            typeMarker := peekByte(stream)
+            if typeMarker == 17 {
+                fmt.Printf("found AMF3 type marker on header")
+            }
         }
 
-        value := readObject(stream, &cxt)
-
-        unused(name, required, messageLength, value)
+        value := readValue(stream, &cxt)
+        header := AmfHeader{name, mustUnderstand, value}
+        result.headers[i] = header
 
         fmt.Printf("Read header, name = %s", name)
     }
@@ -147,32 +295,66 @@ func decode(stream Reader) (*DecodeResult, *DecodeError) {
     fmt.Printf("messageCount = %d\n", messageCount)
 
     for i := 0; i < int(messageCount); i++ {
+
         targetUri := readString(stream)
         responseUri := readString(stream)
         messageLength := readUint32(stream)
 
-        unused(targetUri, responseUri, messageLength)
+        fmt.Printf("Read targetUri = %s\n", targetUri)
+        fmt.Printf("Read responseUri = %s\n", responseUri)
+        fmt.Printf("Read messageLength = %d\n", messageLength)
 
-        fmt.Printf("Read body, targetUri = %s, messageLength = %d\n", targetUri, messageLength)
+        is_request := true
+        if is_request {
+            readRequestArgs(stream, &cxt)
+        }
+
+        messageBody := readValue(stream, &cxt)
+
+        unused(targetUri, responseUri, messageLength, messageBody)
+
     }
 
     return &result, nil
 }
 
-func readElement(stream Reader, cxt *DecodeContext) {
-    var typeCode uint8
-    binary.Read(stream, binary.BigEndian, &typeCode)
-}
-
-func readObject(stream Reader, cxt *DecodeContext) interface{} {
-    if cxt.amfVersion == 0 {
-        return readAMF0Object(stream)
+func readRequestArgs(stream Reader, cxt *DecodeContext) []interface{} {
+    lookaheadByte := peekByte(stream)
+    if lookaheadByte == 17 {
+        if !cxt.useAmf3 {
+            fmt.Printf("Unexpected AMF3 type with incorrect message type")
+        }
+        fmt.Printf("while reading args, found next byte of \\x11")
+        return nil
     }
 
-    return readAMF3Object(stream)
+    if lookaheadByte != 10 {
+        fmt.Printf("Strict array type required for request body (found %d)", lookaheadByte)
+        return nil
+    }
+
+    readByte(stream)
+
+    count := readUint32(stream)
+    result := make([]interface{}, 0)
+
+    fmt.Printf("argument count = %d\n", count)
+
+    for i := uint32(0); i < count; i++ {
+        result[i] = readValue(stream, cxt)
+    }
+    return result
 }
 
-func readAMF0Object(stream Reader) interface{} {
+func readValue(stream Reader, cxt *DecodeContext) interface{} {
+    if cxt.amfVersion == 0 {
+        return readValueAmf0(stream, cxt)
+    }
+
+    return readValueAmf3(stream, cxt)
+}
+
+func readValueAmf0(stream Reader, cxt *DecodeContext) interface{} {
     typeMarker,_ := readByte(stream)
 
     // Type markers
@@ -215,7 +397,7 @@ func readAMF0Object(stream Reader) interface{} {
             if k == 0x09 {
                 break
             }
-            result[name] = readAMF0Object(stream)
+            result[name] = readValueAmf0(stream, cxt)
         }
         return result
 
@@ -235,15 +417,21 @@ func readAMF0Object(stream Reader) interface{} {
     case xmlObjectType:
     case typedObjectType:
     case avmPlusObjectType:
-        return readAMF3Object(stream)
+        return readValueAmf3(stream, cxt)
     }
 
     fmt.Printf("AMF0 type marker was not supported: %d", typeMarker)
     return nil
 }
 
-func readAMF3Object(stream Reader) interface{} {
+func readValueAmf3(stream Reader, cxt *DecodeContext) interface{} {
     typeMarker,_ := readByte(stream)
+
+    if typeMarker == 17 {
+        typeMarker,_ = readByte(stream)
+    }
+
+    fmt.Printf("read typeMarker: %d\n", typeMarker)
 
     // Type markers
     const (
@@ -262,33 +450,37 @@ func readAMF3Object(stream Reader) interface{} {
         byteArrayType = 12
     )
 
-    fmt.Printf("AMF3 type marker was not supported: %d", typeMarker)
+    switch typeMarker {
+    case nullType:
+        return nil
+    case falseType:
+        return false
+    case trueType:
+        return true
+    case integerType:
+        result,_ := readUint29(stream)
+        return result
+    case doubleType:
+        return readFloat64(stream)
+    case stringType:
+        result,_ := readStringAmf3(stream, cxt)
+        return result
+    case objectType:
+        result,_ := readObjectAmf3(stream, cxt)
+        return result
+    case arrayType:
+        result,_ := readArrayAmf3(stream, cxt)
+        return result
+    }
+
+    fmt.Printf("AMF3 type marker was not supported: %d\n", typeMarker)
     return nil
 }
 
-// Read a 29-bit compact encoded integer.
-func readInt29(stream Reader) (uint32, os.Error) {
-    var result uint32 = 0
-    for i := 0; i < 4; i++ {
-        _byte, err := readByte(stream)
-
-        if err != nil {
-            return result, err
-        }
-
-        result = result << 8
-        result += uint32(_byte)
-
-        if (_byte & 0x80) == 0 {
-            break
-        }
-    }
-    return result, nil
-}
 
 func test_readInt29(data []byte) {
     orig := data
-    result,_ := readInt29(bufio.NewReader(bytes.NewBuffer(data)))
+    result,_ := readUint29(bufio.NewReader(bytes.NewBuffer(data)))
     fmt.Printf("unpacked %x to %d\n", orig, result)
 }
 
