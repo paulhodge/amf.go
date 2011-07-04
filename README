@@ -1,0 +1,7 @@
+
+amf.go
+
+A Go library for using Adobe's AMF (Action Message Format)
+
+
+This library is a work in progress
