@@ -67,6 +67,8 @@ type DecodeContext struct {
     stringTable []string
     classTable []*AvmClass
     objectTable []*AvmObject
+
+    decodeError *os.Error
 }
 
 type MessageBundle struct {
@@ -87,12 +89,13 @@ type AmfMessage struct {
     body AvmValue
 }
 
-// AvmValue can be a Go type, or AvmObject.
+// AvmValue is a variant type.
 type AvmValue interface {
 }
 
 type AvmObject struct {
     class *AvmClass
+    fields map[string] AvmValue
 }
 
 type AvmClass struct {
@@ -134,6 +137,9 @@ func readFloat64(stream Reader) float64 {
     var value float64
     binary.Read(stream, binary.BigEndian, &value)
     return value
+}
+func writeFloat64(stream Writer, value float64) {
+    binary.Write(stream, binary.BigEndian, &value)
 }
 func readString(stream Reader) string {
     length := readUint16(stream)
@@ -184,7 +190,36 @@ func readUint29(stream Reader) (uint32, os.Error) {
 }
 
 func writeUint29(stream Writer, value uint32) {
-    // TODO
+
+    // Make sure the value is only 29 bits
+    value29 := value & 0x1fffffff
+    if value29 != value {
+        fmt.Println("warning: writeUint29 received a value that does not fit in 29 bits")
+    }
+
+    // Peel off the value 7 bits at a time. Use the 'wroteSomething' flag to make sure
+    // we at least write one byte (in case value is 0).
+    wroteSomething := false
+    for (value29 > 0) && !wroteSomething {
+        byteOut := uint8(value29 & 0x7f)
+        value29 = value29 >> 7
+
+        // Set the 0x80 bit if there is still more data to come.
+        if value29 > 0 {
+            byteOut = byteOut | 0x80
+        }
+
+        writeByte(stream, byteOut)
+        wroteSomething = true
+    }
+}
+
+func decodeErrorOccurred(cxt *DecodeContext, err os.Error) {
+    if cxt.decodeError != nil {
+        fmt.Println("warning: duplicate errors on DecodeContext")
+    } else {
+        cxt.decodeError = &err
+    }
 }
 
 func readStringAmf3(stream Reader, cxt *DecodeContext) (string, os.Error) {
@@ -212,6 +247,7 @@ func writeStringAmf3(stream Writer, s string) {
     length := len(s)
 
     // TODO: Support references
+
     writeUint29(stream, uint32((length << 1) + 1))
 
     stream.Write([]byte(s))
@@ -221,7 +257,7 @@ func readObjectAmf3(stream Reader, cxt *DecodeContext) (*AvmObject, os.Error) {
 
     ref,_ := readUint29(stream)
 
-    fmt.Printf("in readObjectAmf3, parsed ref: %d\n", ref)
+    fmt.Println("in readObjectAmf3, parsed ref: %d", ref)
 
     // Check the low bit to see if this is a reference
     if (ref & 1) == 0 {
@@ -236,13 +272,11 @@ func readObjectAmf3(stream Reader, cxt *DecodeContext) (*AvmObject, os.Error) {
     // circular references.
     cxt.objectTable = append(cxt.objectTable, &object)
 
-    var fields map[string] interface{}
-
     // Read static fields
-    for _,propName := range class.properties {
+    for _,name := range class.properties {
         value := readValueAmf3(stream, cxt)
-        fields[propName] = value
-        fmt.Printf("read static field %s = %s", propName, value)
+        object.fields[name] = value
+        fmt.Println("read static field %s = %s", name, value)
     }
 
     if class.dynamic {
@@ -254,23 +288,23 @@ func readObjectAmf3(stream Reader, cxt *DecodeContext) (*AvmObject, os.Error) {
             }
 
             value := readValueAmf3(stream, cxt)
-            fields[name] = value
+            object.fields[name] = value
+            fmt.Println("read dynamic field %s = %s", name, value)
         }
     }
 
     return &object,nil
 }
 
-func writeObjectAmf3(stream Writer, value interface{}) os.Error {
+func writeObjectAmf3(stream Writer, value AvmValue) os.Error {
 
-    fmt.Printf("writeValueAmf3 attempting to write a value of type %s",
+    fmt.Println("writeValueAmf3 attempting to write a value of type %s",
         reflect.ValueOf(value).Type().Name())
 
     return nil
 }
 
 func readClassDefinitionAmf3(stream Reader, ref uint32, cxt *DecodeContext) (*AvmClass, os.Error) {
-
     // Check for a reference to an existing class definition
     if (ref & 2) == 0 {
         return cxt.classTable[int(ref >> 2)], nil
@@ -302,10 +336,12 @@ func readClassDefinitionAmf3(stream Reader, ref uint32, cxt *DecodeContext) (*Av
     return &class, nil
 }
 
+func writeClassDefinitionAmf3(stream Writer, 
+
 func readArrayAmf3(stream Reader, cxt *DecodeContext) (interface{}, os.Error) {
     ref,_ := readUint29(stream)
 
-    fmt.Printf("readArrayAmf3 read ref: %d\n", ref)
+    fmt.Println("readArrayAmf3 read ref: %d", ref)
 
     // Check the low bit to see if this is a reference
     if (ref & 1) == 0 {
@@ -314,7 +350,7 @@ func readArrayAmf3(stream Reader, cxt *DecodeContext) (interface{}, os.Error) {
 
     size := int(ref >> 1)
 
-    fmt.Printf("readArrayAmf3 read size: %d", size)
+    fmt.Println("readArrayAmf3 read size: %d", size)
 
     key,_ := readStringAmf3(stream, cxt)
 
@@ -433,10 +469,14 @@ func readValueAmf0(stream Reader, cxt *DecodeContext) AvmValue {
 }
 
 func readValueAmf3(stream Reader, cxt *DecodeContext) AvmValue {
+
+    // Read type marker
     typeMarker,_ := readByte(stream)
 
-    // Seems like there are some cases where we expect an AMF3 value and we get
-    // the AMF0 typeCode of amf0_avmPlusObjectType. At least this is unambiguous.
+    // Flash Player 9 will sometimes wrap data as an AMF0 value, which just means that
+    // there might be an additional type code (amf0_avmPlusObjectType), which we can
+    // unambiguously ignore here.
+
     if typeMarker == amf0_avmPlusObjectType {
         typeMarker,_ = readByte(stream)
     }
@@ -444,7 +484,7 @@ func readValueAmf3(stream Reader, cxt *DecodeContext) AvmValue {
     fmt.Printf("read typeMarker: %d\n", typeMarker)
 
     switch typeMarker {
-    case amf3_nullType:
+    case amf3_nullType, amf3_undefinedType:
         return nil
     case amf3_falseType:
         return false
@@ -464,9 +504,11 @@ func readValueAmf3(stream Reader, cxt *DecodeContext) AvmValue {
     case amf3_arrayType:
         result,_ := readArrayAmf3(stream, cxt)
         return result
+    default:
+        fmt.Printf("AMF3 type marker was not supported: %d\n", typeMarker)
+        decodeErrorOccurred(cxt, os.NewError("AMF3 type marker was not supported"))
+        return nil
     }
-
-    fmt.Printf("AMF3 type marker was not supported: %d\n", typeMarker)
     return nil
 }
 
@@ -478,9 +520,17 @@ func writeValueAmf3(stream Writer, value interface{}) os.Error {
         str,_ := value.(string)
         writeStringAmf3(stream, str)
     case int:
-        writeByte(stream, amf3_integerType)
         n,_ := value.(uint32)
+        writeByte(stream, amf3_integerType)
         writeUint29(stream, n)
+    case float32:
+        n,_ := value.(float32)
+        writeByte(stream, amf3_doubleType)
+        writeFloat64(stream, float64(n))
+    case float64:
+        n,_ := value.(float64)
+        writeByte(stream, amf3_doubleType)
+        writeFloat64(stream, n)
     case bool:
         if value == false {
             writeByte(stream, amf3_falseType)
@@ -491,7 +541,7 @@ func writeValueAmf3(stream Writer, value interface{}) os.Error {
         writeByte(stream, amf3_nullType)
     case []interface{}:
         writeByte(stream, amf3_arrayType)
-        // TODO: Array type
+        fmt.Printf("unimplemented: writing an array type")
     default:
         writeByte(stream, amf3_objectType)
         writeObjectAmf3(stream, value)
@@ -510,8 +560,19 @@ func Decode(stream Reader) (*MessageBundle, os.Error) {
 
     fmt.Printf("amfVersion = %d\n", cxt.amfVersion)
 
-    // see http://osflash.org/documentation/amf/envelopes/remoting#preamble
-    // why we are doing this...
+    /*
+        From http://osflash.org/documentation/amf/envelopes/remoting:
+
+        The first two bytes of an AMF message are an unsigned short int. The result 
+        indicates what type of Flash Player connected to the server.
+
+        0x00 for Flash Player 8 and below
+        0x01 for FlashCom/FMS
+        0x03 for Flash Player 9
+        Note that Flash Player 9 will always set the second byte to 0x03, regardless of
+        whether the message was sent in AMF0 or AMF3.
+    */
+
     if cxt.amfVersion > 0x09 {
         return nil, os.NewError("Malformed stream (wrong amfVersion)")
     }
@@ -520,6 +581,17 @@ func Decode(stream Reader) (*MessageBundle, os.Error) {
     headerCount := readUint16(stream)
 
     fmt.Printf("headerCount = %d\n", headerCount)
+
+    /*
+        From http://osflash.org/documentation/amf/envelopes/remoting:
+
+        Each header consists of the following:
+
+        UTF string (including length bytes) - name
+        Boolean - specifies if understanding the header is 'required'
+        Long - Length in bytes of header
+        Variable - Actual data (including a type code)
+    */
 
     // Read headers
     result.headers = make([]AmfHeader, headerCount)
@@ -544,12 +616,25 @@ func Decode(stream Reader) (*MessageBundle, os.Error) {
         fmt.Printf("Read header, name = %s", name)
     }
 
+    /*
+        From http://osflash.org/documentation/amf/envelopes/remoting:
+    
+        Between the headers and the start of the bodies is a int specifying the number of
+        bodies. Each body consists of the following:
+
+        UTF String - Target
+        UTF String - Response
+        Long - Body length in bytes
+        Variable - Actual data (including a type code)
+    */
+
     // Read message bodies
     messageCount := readUint16(stream)
     fmt.Printf("messageCount = %d\n", messageCount)
     result.messages = make([]AmfMessage, messageCount)
 
     for i := 0; i < int(messageCount); i++ {
+        // TODO: Should reset object tables here
 
         message := &result.messages[i]
 
@@ -575,7 +660,7 @@ func Decode(stream Reader) (*MessageBundle, os.Error) {
     return &result, nil
 }
 
-func Encode(stream Writer, bundle *MessageBundle) os.Error {
+func encodeBundle(stream Writer, bundle *MessageBundle) os.Error {
     writeUint16(stream, bundle.amfVersion)
 
     // Write headers
@@ -638,6 +723,10 @@ type FlexErrorMessage struct {
     rootCause string
 }
 
+func amfMessageHandler(request AmfMessage) (data AvmValue, success bool) {
+    return "hello", true
+}
+
 func handler(w http.ResponseWriter, r *http.Request) {
     if r.Method == "Get" {
         handleGet(w)
@@ -645,39 +734,56 @@ func handler(w http.ResponseWriter, r *http.Request) {
     }
 
     // Decode the request
-    request,_ := Decode(bufio.NewReader(r.Body))
+    requestBundle,_ := Decode(bufio.NewReader(r.Body))
 
-    unused(request)
+    // Initialize the reply bundle.
+    replyBundle := MessageBundle{}
+    replyBundle.amfVersion = 3
+    replyBundle.messages = make([]AmfMessage, len(requestBundle.messages))
 
-    reply := MessageBundle{}
-    reply.amfVersion = 3
-    reply.messages = make([]AmfMessage, 1)
+    // Construct a reply to each message.
+    for index,request := range requestBundle.messages {
+        reply := &replyBundle.messages[index]
 
-    reply.messages[0].args = []AvmValue{"hello"}
+        replyBody,success := amfMessageHandler(request)
+        reply.body = replyBody
 
+        /*
+        From http://osflash.org/documentation/amf/envelopes/remoting:
+
+        The response to a request has the exact same structure as a request. A request
+        requiring a body response should be answered in the following way:
+
+        Target: set to Response index plus one of "/onStatus", "onResult", or
+        "/onDebugEvents". "/onStatus" is reserved for runtime errors. "/onResult" is for
+        succesful calls. "/onDebugEvents" is for debug information, see debug information.
+        Thus if the client requested something with response index '/1', and the call was
+        succesful, '/1/onResult' should be sent back. Response: should be set to the string
+        'null'.  Data: set to the returned data.
+        */
+
+        if success {
+            reply.targetUri = request.targetUri + "/onResult"
+        } else {
+            reply.targetUri = request.targetUri + "/onStatus"
+        }
+        reply.responseUri = ""
+        fmt.Printf("writing reply to message %d, targetUri = %s", index, reply.targetUri)
+    }
+
+    // Encode the outgoing message bundle.
     replyBuffer := bytes.NewBuffer(make([]byte, 0))
-    Encode(replyBuffer, &reply)
-    replyData := replyBuffer.Bytes()
-
-    fmt.Printf("reply data has size: %d", len(replyData))
+    encodeBundle(replyBuffer, &replyBundle)
+    replyBytes := replyBuffer.Bytes()
+    w.Write(replyBytes)
 
     w.Header().Set("Content-Type", "application/x-amf")
-    w.Header().Set("Content-Length", strconv.Itoa(len(replyData)))
+    w.Header().Set("Content-Length", strconv.Itoa(len(replyBytes)))
     w.Header().Set("Server", "SERVER_NAME")
 
-    w.Write(replyData)
-
-    fmt.Printf("writing reply data: %s", replyData)
-
-    // remoting.decode
-
-    // process request (to callback)
-
-    // remoting.encode
-
-    //writeReply500(w)
-
+    fmt.Printf("writing reply data with length: %d", len(replyBytes))
 }
+
 func main() {
     http.HandleFunc("/", handler)
     http.ListenAndServe(":8080", nil)
