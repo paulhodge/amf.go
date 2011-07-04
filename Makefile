@@ -1,6 +1,6 @@
 all: build run
 
 build:
-	6g decode.go && 6l decode.6
+	6g protocol.go && 6l protocol.6
 run:
 	./6.out
