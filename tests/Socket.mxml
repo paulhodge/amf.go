@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:Application xmlns:mx="http://www.adobe.com/2006/mxml" layout="absolute">
+  <mx:Script>
+    <![CDATA[
+        import flash.net.Socket;
+
+        var socket:flash.net.Socket = new flash.net.Socket();
+
+        public function connect():void {
+            if (socket.connected) {
+                socket.close()
+            }
+            result_text.text = "Connecting.."
+            socket.addEventListener(ProgressEvent.SOCKET_DATA, onData)
+            socket.connect("127.0.0.1", 8080)
+            socket.writeObject("testObject")
+            socket.flush()
+            result_text.text = "Connected"
+        }
+
+        public function onData(event:ProgressEvent):void {
+            var data:flash.utils.ByteArray = new flash.utils.ByteArray()
+            socket.readBytes(data, 0, socket.bytesAvailable)
+            result_text.text = data.toString()
+        }
+    ]]>
+
+</mx:Script>
+<mx:Button x="250" y="157" label="connect" click="connect();"/>
+<mx:TextArea x="10" y="36" width="319" height="113" id="result_text"/>
+<mx:Label x="10" y="10" text="Result:"/>
+</mx:Application>

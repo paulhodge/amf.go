@@ -80,22 +80,21 @@ type MessageBundle struct {
 type AmfHeader struct {
     name string
     mustUnderstand bool
-    value AvmValue
+    value AmfValue
 }
 type AmfMessage struct {
     targetUri string
     responseUri string
-    args []AvmValue
-    body AvmValue
+    args []AmfValue
+    body AmfValue
 }
 
-// AvmValue is a variant type.
-type AvmValue interface {
-}
+// AmfValue is a variant type.
+type AmfValue interface {}
 
 type AvmObject struct {
     class *AvmClass
-    fields map[string] AvmValue
+    fields map[string] AmfValue
 }
 
 type AvmClass struct {
@@ -296,7 +295,7 @@ func readObjectAmf3(stream Reader, cxt *DecodeContext) (*AvmObject, os.Error) {
     return &object,nil
 }
 
-func writeObjectAmf3(stream Writer, value AvmValue) os.Error {
+func writeObjectAmf3(stream Writer, value AmfValue) os.Error {
 
     fmt.Println("writeValueAmf3 attempting to write a value of type %s",
         reflect.ValueOf(value).Type().Name())
@@ -372,7 +371,7 @@ func readArrayAmf3(stream Reader, cxt *DecodeContext) (interface{}, os.Error) {
     return nil,nil
 }
 
-func readRequestArgs(stream Reader, cxt *DecodeContext) []AvmValue {
+func readRequestArgs(stream Reader, cxt *DecodeContext) []AmfValue {
     lookaheadByte := peekByte(stream)
     if lookaheadByte == 17 {
         if !cxt.useAmf3 {
@@ -390,7 +389,7 @@ func readRequestArgs(stream Reader, cxt *DecodeContext) []AvmValue {
     readByte(stream)
 
     count := readUint32(stream)
-    result := make([]AvmValue, count)
+    result := make([]AmfValue, count)
 
     fmt.Printf("argument count = %d\n", count)
 
@@ -411,7 +410,7 @@ func writeRequestArgs(stream Writer, message *AmfMessage) os.Error {
     return nil
 }
 
-func readValue(stream Reader, cxt *DecodeContext) AvmValue {
+func readValue(stream Reader, cxt *DecodeContext) AmfValue {
     if cxt.amfVersion == 0 {
         return readValueAmf0(stream, cxt)
     }
@@ -419,7 +418,7 @@ func readValue(stream Reader, cxt *DecodeContext) AvmValue {
     return readValueAmf3(stream, cxt)
 }
 
-func readValueAmf0(stream Reader, cxt *DecodeContext) AvmValue {
+func readValueAmf0(stream Reader, cxt *DecodeContext) AmfValue {
     typeMarker,_ := readByte(stream)
 
     // Type markers
@@ -468,7 +467,7 @@ func readValueAmf0(stream Reader, cxt *DecodeContext) AvmValue {
     return nil
 }
 
-func readValueAmf3(stream Reader, cxt *DecodeContext) AvmValue {
+func readValueAmf3(stream Reader, cxt *DecodeContext) AmfValue {
 
     // Read type marker
     typeMarker,_ := readByte(stream)
@@ -685,6 +684,8 @@ func encodeBundle(stream Writer, bundle *MessageBundle) os.Error {
     return nil
 }
 
+// This gateway stuff will get moved to a separate file..
+
 func handleGet(w http.ResponseWriter) {
     w.Header().Set("Content-Type", "text/plain")
     w.WriteHeader(405)
@@ -723,7 +724,7 @@ type FlexErrorMessage struct {
     rootCause string
 }
 
-func amfMessageHandler(request AmfMessage) (data AvmValue, success bool) {
+func amfMessageHandler(request AmfMessage) (data AmfValue, success bool) {
     return "hello", true
 }
 
