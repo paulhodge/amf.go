@@ -7,6 +7,8 @@ import (
         "os"
 )
 
+import amf "../protocol"
+
 func main() {
     fmt.Println("listening on 8080..")
     local, err := net.Listen("tcp", ":8080")
@@ -22,23 +24,49 @@ func main() {
     }
 }
 
+type GrowableWriter struct {
+    data []byte
+}
+
+func (self *GrowableWriter) Write(d []byte) (n int, err os.Error) {
+    self.data = append(self.data, d...)
+    return len(d), nil
+}
+
 func handle(local net.Conn) {
     fmt.Println("Connection opened..")
-    buf := make([]byte, 1024)
-    local.SetReadTimeout(0)
 
-    local.Write([]byte("Thanks for connecting\x00"))
+    // Socket.mxml will send a bunch of AMF3 encoded values, each preceded by
+    // a string label.
+
+    outgoing := &GrowableWriter{}
 
     for {
-        bytes,err := local.Read(buf)
+        label,err := amf.ReadString(local)
+        if label == "" || err != nil {
+            fmt.Println("Received empty label")
+            break
+        }
+        obj, err := amf.ReadValueAmf3(local)
         if err != nil {
-            log("read failed: %v", err)
-            return
+            fmt.Printf("%v\n", err)
+            break
         }
-        if bytes > 0 {
-            fmt.Printf("Received: %s\n", string(buf))
-        }
+        fmt.Printf("%s %v\n",label, obj)
+
+        fmt.Printf("writing label: %s\n", label)
+
+        // Write the value to our outgoing buffer.
+        amf.WriteString(outgoing, label)
+        amf.WriteValueAmf3(outgoing, obj)
     }
+
+    // Write all of our data, prepended with size.
+    amf.WriteInt32(local, int32(len(outgoing.data)))
+    fmt.Printf("sending %d bytes\n", len(outgoing.data))
+
+    local.Write(outgoing.data)
+    amf.WriteString(local, "")
 }
 
 func log(s string, a ... interface{}) {

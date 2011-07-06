@@ -26,14 +26,11 @@ func handle(local net.Conn) {
 
     local.Read(buf)
 
-    if string(buf[0:len(expected_message)]) == expected_message {
-        fmt.Println("received proper request")
-    } else {
+    if string(buf[0:len(expected_message)]) != expected_message {
         fmt.Printf("received malformed request: %s\n", string(buf))
     }
 
-    // If this was anything other than a test script, this thing would be in a separate
-    // file.
+    // This is just a test script, otherwise this would go in a separate file..
     policyFile := "<?xml version=\"1.0\"?>" +
         "<!DOCTYPE cross-domain-policy SYSTEM \"/xml/dtds/cross-domain-policy.dtd\">" +
         "<!-- Policy file for xmlsocket://socks.example.com -->" +
