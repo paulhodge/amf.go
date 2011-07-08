@@ -11,20 +11,7 @@
         import TestClasses.SealedClass;
 
         var socket:flash.net.Socket
-        var expectingLength:Boolean
-        var dataLength:int = 0
 
-        /*
-        public dynamic class EmptyDynamicClass
-        {
-        }
-
-        public dynamic class MixedDynamicClass
-        {
-            var i:int = 123
-            var s:string = "apple"
-        }
-        */
 
         public function connect():void {
             socket = new flash.net.Socket();
@@ -130,6 +117,9 @@
             result_text.text += "Sent test data\n"
         }
 
+        // Fields for incoming data
+        var expectingLength:Boolean
+        var dataLength:int = 0
 
         public function onData(event:ProgressEvent):void {
             if (expectingLength) {

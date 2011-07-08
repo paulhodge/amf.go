@@ -163,13 +163,13 @@ func readUint32(stream Reader) uint32 {
 func writeUint32(stream Writer, value uint32) {
     binary.Write(stream, binary.BigEndian, &value)
 }
-func readFloat64(stream Reader) float64 {
+func readFloat64(stream Reader) (float64,os.Error) {
     var value float64
-    binary.Read(stream, binary.BigEndian, &value)
-    return value
+    err := binary.Read(stream, binary.BigEndian, &value)
+    return value, err
 }
-func writeFloat64(stream Writer, value float64) {
-    binary.Write(stream, binary.BigEndian, &value)
+func WriteFloat64(stream Writer, value float64) os.Error {
+    return binary.Write(stream, binary.BigEndian, &value)
 }
 func ReadString(stream Reader) (string,os.Error) {
     length,err := readUint16(stream)
@@ -180,10 +180,14 @@ func ReadString(stream Reader) (string,os.Error) {
     _,err = stream.Read(data)
     return string(data), err
 }
-func readStringLength(stream Reader, length int) string {
+func readStringLength(stream Reader, length int) (string,os.Error) {
     data := make([]byte, length)
-    stream.Read(data)
-    return string(data)
+    n,err := stream.Read(data)
+    if n < length {
+        return "", os.NewError(fmt.Sprintf(
+            "Not enough bytes in readStringLength (expected %d, found %d)", length, n))
+    }
+    return string(data), err
 }
 func WriteString(stream Writer, str string) os.Error {
     binary.Write(stream, binary.BigEndian, uint16(len(str)))
@@ -263,13 +267,23 @@ func WriteUint29(stream Writer, value uint32) os.Error {
     return nil
 }
 
-func readString3(stream Reader, cxt *DecodeContext) string {
-    ref,_ := readUint29(stream)
+func readStringAmf3(stream Reader, cxt *DecodeContext) string {
+    ref,err := readUint29(stream)
+
+    if err != nil {
+        cxt.saveError(err)
+        return ""
+    }
 
     // Check the low bit to see if this is a reference
     if (ref & 1) == 0 {
-        fmt.Printf("Looking up a string ref: %d\n", int(ref>>1))
-        return cxt.stringTable[int(ref>>1)]
+        index := int(ref >> 1)
+        if index >= len(cxt.stringTable) {
+            cxt.saveError(os.NewError(fmt.Sprintf("String reference out of range: %d", index)))
+            return ""
+        }
+
+        return cxt.stringTable[index]
     }
 
     length := int(ref >> 1)
@@ -278,7 +292,8 @@ func readString3(stream Reader, cxt *DecodeContext) string {
         return ""
     }
 
-    str := readStringLength(stream, length)
+    str,err := readStringLength(stream, length)
+    cxt.saveError(err)
     cxt.stringTable = append(cxt.stringTable, str)
 
     return str
@@ -287,7 +302,7 @@ func readString3(stream Reader, cxt *DecodeContext) string {
 func WriteStringAmf3(stream Writer, s string) {
     length := len(s)
 
-    // TODO: Support references
+    // TODO: Support outgoing string references.
 
     WriteUint29(stream, uint32((length << 1) + 1))
 
@@ -331,7 +346,7 @@ func readObject3(stream Reader, cxt *DecodeContext) *AvmObject {
     if class.dynamic {
         // Parse dynamic fields
         for {
-            name := readString3(stream, cxt)
+            name := readStringAmf3(stream, cxt)
             if name == "" {
                 break
             }
@@ -344,10 +359,19 @@ func readObject3(stream Reader, cxt *DecodeContext) *AvmObject {
     return &object
 }
 
-func writeObject3(stream Writer, value AmfValue) os.Error {
+func writeObject3(stream Writer, value interface{}) os.Error {
 
     fmt.Printf("writeObject3 attempting to write a value of type %s\n",
         reflect.ValueOf(value).Type().Name())
+
+    return nil
+}
+
+func writeAvmObject3(stream Writer, value *AvmObject) os.Error {
+    // TODO: Support outgoing object references.
+
+    // writeClassDefinitionAmf3 will also write the ref section.
+    writeClassDefinitionAmf3(stream, value.class)
 
     return nil
 }
@@ -359,7 +383,7 @@ func readClassDefinitionAmf3(stream Reader, ref uint32, cxt *DecodeContext) *Avm
     }
 
     // Parse a class definition
-    className := readString3(stream, cxt)
+    className := readStringAmf3(stream, cxt)
 
     externalizable := ref & 4 != 0
     dynamic := ref & 8 != 0
@@ -369,7 +393,7 @@ func readClassDefinitionAmf3(stream Reader, ref uint32, cxt *DecodeContext) *Avm
 
     // Property names
     for i := uint32(0); i < propertyCount; i++ {
-        class.properties[i] = readString3(stream, cxt)
+        class.properties[i] = readStringAmf3(stream, cxt)
     }
 
     // Save the new class in the loopup table
@@ -378,8 +402,29 @@ func readClassDefinitionAmf3(stream Reader, ref uint32, cxt *DecodeContext) *Avm
     return &class
 }
 
-func writeClassDefinitionAmf3(stream Writer) {
-    // TODO
+func writeClassDefinitionAmf3(stream Writer, class *AvmClass) {
+    // TODO: Support class references
+    var ref uint32 = 0
+
+    ref += 0x2
+
+    if class.externalizable {
+        ref += 0x4
+    }
+    if class.dynamic {
+        ref += 0x8
+    }
+
+    ref += uint32(len(class.properties) << 4)
+
+    WriteUint29(stream, ref)
+
+    WriteStringAmf3(stream, class.name)
+
+    // Property names
+    for _,name := range class.properties {
+        WriteStringAmf3(stream, name)
+    }
 }
 
 func readArray3(stream Reader, cxt *DecodeContext) *AvmArray {
@@ -407,13 +452,13 @@ func readArray3(stream Reader, cxt *DecodeContext) *AvmArray {
     cxt.storeArrayInTable(result)
 
     // Read name-value pairs, if any.
-    key := readString3(stream, cxt)
+    key := readStringAmf3(stream, cxt)
 
     if key != "" {
         result.fields = make(map[string]AmfValue)
         for key != "" {
             result.fields[key] = readValueAmf3(stream, cxt)
-            key = readString3(stream, cxt)
+            key = readStringAmf3(stream, cxt)
         }
     }
 
@@ -429,7 +474,7 @@ func readArray3(stream Reader, cxt *DecodeContext) *AvmArray {
 func writeFlatArray3(stream Writer, value []interface{}) os.Error {
     elementCount := len(value)
 
-    // Don't support references for now.
+    // TODO: Support outgoing array references
     ref := (elementCount << 1) + 1
 
     WriteUint29(stream, uint32(ref))
@@ -447,7 +492,7 @@ func writeFlatArray3(stream Writer, value []interface{}) os.Error {
 func writeMixedArray3(stream Writer, value *AvmArray) os.Error {
     elementCount := len(value.elements)
 
-    // Don't support references for now.
+    // TODO: Support outgoing array references
     ref := (elementCount << 1) + 1
 
     WriteUint29(stream, uint32(ref))
@@ -485,7 +530,9 @@ func readValueAmf0(stream Reader, cxt *DecodeContext) AmfValue {
     // Type markers
     switch typeMarker {
     case amf0_numberType:
-        return readFloat64(stream)
+        val,err := readFloat64(stream)
+        cxt.saveError(err)
+        return val
     case amf0_booleanType:
         val,err := readUint8(stream)
         cxt.saveError(err)
@@ -500,7 +547,7 @@ func readValueAmf0(stream Reader, cxt *DecodeContext) AmfValue {
             c1,_ := readByte(stream)
             c2,_ := readByte(stream)
             length := int(c1) << 8 + int(c2)
-            name := readStringLength(stream, length)
+            name,_ := readStringLength(stream, length)
             result[name] = readValueAmf0(stream, cxt)
         }
         return result
@@ -555,18 +602,20 @@ func readValueAmf3(stream Reader, cxt *DecodeContext) AmfValue {
     case amf3_trueType:
         return true
     case amf3_integerType:
-        result,_ := readUint29(stream)
+        result,err := readUint29(stream)
+        cxt.saveError(err)
         return result
     case amf3_doubleType:
-        return readFloat64(stream)
+        result,err := readFloat64(stream)
+        cxt.saveError(err)
+        return result
     case amf3_stringType:
-        return readString3(stream, cxt)
+        return readStringAmf3(stream, cxt)
     case amf3_objectType:
         return readObject3(stream, cxt)
     case amf3_arrayType:
         return readArray3(stream, cxt)
     default:
-        fmt.Printf("AMF3 type marker was not supported: %d\n", typeMarker)
         cxt.saveError(os.NewError("AMF3 type marker was not supported"))
         return nil
     }
@@ -580,18 +629,18 @@ func WriteValueAmf3(stream Writer, value interface{}) os.Error {
         writeByte(stream, amf3_stringType)
         str,_ := value.(string)
         WriteStringAmf3(stream, str)
-    case int32, uint32:
+    case int, int32, uint32:
         n,_ := value.(uint32)
         writeByte(stream, amf3_integerType)
         return WriteUint29(stream, n)
     case float32:
         n,_ := value.(float32)
         writeByte(stream, amf3_doubleType)
-        writeFloat64(stream, float64(n))
+        return WriteFloat64(stream, float64(n))
     case float64:
         n,_ := value.(float64)
         writeByte(stream, amf3_doubleType)
-        writeFloat64(stream, n)
+        return WriteFloat64(stream, n)
     case bool:
         if value == false {
             return writeByte(stream, amf3_falseType)
@@ -610,9 +659,10 @@ func WriteValueAmf3(stream Writer, value interface{}) os.Error {
         return writeMixedArray3(stream, arr)
     case *AvmObject:
         writeByte(stream, amf3_objectType)
-        writeObject3(stream, value)
+        obj,_ := value.(*AvmObject)
+        writeAvmObject3(stream, obj)
     default:
-        fmt.Printf("Didn't recognize type: %s\n", reflect.ValueOf(value).Type().Name())
+        fmt.Printf("WriteValueAmf3 didn't recognize type: %s\n", reflect.ValueOf(value).Type().Name())
     }
 
     return nil

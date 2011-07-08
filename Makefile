@@ -1,4 +1,10 @@
+include $(GOROOT)/src/Make.inc
 
-lib:
+TARG=amv
+GOFILES=\
+	protocol.go\
+
+all:
 	6g protocol.go
 
+include $(GOROOT)/src/Make.pkg
