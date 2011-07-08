@@ -20,11 +20,13 @@ func testReadAmf3(t *testing.T, blobStr string, expectedStr string) {
 	}
 
 	if err != nil {
-		t.Errorf("Received error while expecting to unpack '%s': %v", expectedStr, err)
+		t.Errorf("Received error while expecting to unpack %s -> '%s': %v", blobStr,
+			expectedStr, err)
 	}
 
 	if reader.Len() != 0 {
-		t.Errorf("Leftover bytes (%d) while expecting to unpack '%s'", reader.Len(), expectedStr)
+		t.Errorf("Leftover bytes (%d) while expecting to unpack %s -> '%s'", reader.Len(),
+			blobStr, expectedStr)
 	}
 }
 
@@ -70,20 +72,24 @@ func TestIntegers(t *testing.T) {
 	testReadAmf3(t, "0400", "0")
 	testReadAmf3(t, "0401", "1")
 	testReadAmf3(t, "0401", "1")
+	testReadAmf3(t, "048001", "1") // <- non-normalized
 	testReadAmf3(t, "0420", "32")
 	testReadAmf3(t, "047f", "127")
-	testReadAmf3(t, "048001", "1")
+	testReadAmf3(t, "048952", "1234")
 	testReadAmf3(t, "04ff7f", "16383")
 	testReadAmf3(t, "04ffffffff", "536870911")
+	testReadAmf3(t, "049db7cd15", "123456789")
 
 	expectReadErrorAmf3(t, "04")
 	expectReadErrorAmf3(t, "0480")
 	expectReadErrorAmf3(t, "04ffffff")
 
-	testWriteAmf3(t, 1, "0400")
-	testWriteAmf3(t, 123, "0400")
-	testWriteAmf3(t, 50000, "0400")
-	testWriteAmf3(t, 12345678, "0400")
+	testWriteAmf3(t, 1, "0401")
+	testWriteAmf3(t, 123, "047b")
+	testWriteAmf3(t, 32, "0420")
+	testWriteAmf3(t, 127, "047f")
+	testWriteAmf3(t, 1234, "048952")
+	testWriteAmf3(t, 123456789, "049db7cd15")
 }
 
 func TestDoubles(t *testing.T) {
@@ -125,6 +131,24 @@ func TestObjects(t *testing.T) {
 }
 
 func TestArrays(t *testing.T) {
+
+	testReadAmf3(t, "090101", "[]")
+	testReadAmf3(t, "0903010401", "[1]")
+	testReadAmf3(t, "090701040104020403", "[1 2 3]")
+
+	// Mixed array
+	testReadAmf3(t, "09070361060b6170706c650362060d62616e616e6101040104020403",
+		"&{[1 2 3] map[a:apple b:banana]}")
+
+	expectReadErrorAmf3(t, "09")
+	expectReadErrorAmf3(t, "0900")
+	expectReadErrorAmf3(t, "0901")
+	expectReadErrorAmf3(t, "090100")
+	expectReadErrorAmf3(t, "090107")
+
+	testWriteAmf3(t, []int{}, "090101")
+	testWriteAmf3(t, []int{1}, "0903010401")
+	testWriteAmf3(t, []int{1, 2, 3}, "090701040104020403")
 }
 
 func TestOther(t *testing.T) {

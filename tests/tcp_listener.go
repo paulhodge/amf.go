@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"net"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -23,13 +25,15 @@ func main() {
 	}
 }
 
-type GrowableWriter struct {
-	data []byte
+type ReaderSpy struct {
+	reader io.Reader
+	data   []byte
 }
 
-func (self *GrowableWriter) Write(d []byte) (n int, err os.Error) {
-	self.data = append(self.data, d...)
-	return len(d), nil
+func (r *ReaderSpy) Read(p []byte) (int, os.Error) {
+	n, err := r.reader.Read(p)
+	r.data = append(r.data, p...)
+	return n, err
 }
 
 func handle(local net.Conn) {
@@ -38,7 +42,7 @@ func handle(local net.Conn) {
 	// Socket.mxml will send a bunch of AMF3 encoded values, each preceded by
 	// a string label.
 
-	outgoing := &GrowableWriter{}
+	outgoing := bytes.NewBuffer([]byte{})
 
 	for {
 		label, err := amf.ReadString(local)
@@ -46,12 +50,17 @@ func handle(local net.Conn) {
 			fmt.Println("Received empty label")
 			break
 		}
-		obj, err := amf.ReadValueAmf3(local)
+
+		// Spy on the data that was read.
+		readerSpy := ReaderSpy{}
+		readerSpy.reader = local
+
+		obj, err := amf.ReadValueAmf3(&readerSpy)
 		if err != nil {
 			fmt.Printf("%v\n", err)
 			break
 		}
-		fmt.Printf("%s %v\n", label, obj)
+		fmt.Printf("%s %x -> %v\n", label, readerSpy.data, obj)
 
 		fmt.Printf("writing label: %s\n", label)
 
@@ -61,10 +70,11 @@ func handle(local net.Conn) {
 	}
 
 	// Write all of our data, prepended with size.
-	amf.WriteInt32(local, int32(len(outgoing.data)))
-	fmt.Printf("sending %d bytes\n", len(outgoing.data))
+	outgoingData := outgoing.Bytes()
+	amf.WriteInt32(local, int32(len(outgoingData)))
+	fmt.Printf("sending %d bytes\n", len(outgoingData))
 
-	local.Write(outgoing.data)
+	local.Write(outgoingData)
 	amf.WriteString(local, "")
 }
 

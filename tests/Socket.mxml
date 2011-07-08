@@ -12,109 +12,77 @@
 
         var socket:flash.net.Socket
 
+        public function log(s:String) {
+            result_text.text += s + "\n"
+        }
 
-        public function connect():void {
+        public function start():void {
+            log("Connecting..")
             socket = new flash.net.Socket();
             expectingLength = true
-            result_text.text = "Connecting..\n"
 
             socket.addEventListener(ProgressEvent.SOCKET_DATA, onData)
             socket.addEventListener(Event.CONNECT, onConnect)
             socket.connect("127.0.0.1", 8080)
         }
 
+        public function writeThing(label:String, obj) {
+            socket.writeUTF(label)
+            socket.writeObject(obj)
+        }
+
         public function onConnect(event:Event):void {
 
             // Write a bunch of different objects, to test unpacking.
-            socket.writeUTF("String:")
-            socket.writeObject("a string")
+            writeThing("String", "a string")
+            writeThing("True:", true)
+            writeThing("False:", false)
+            writeThing("Null:", null)
+            writeThing("Undefined:", undefined)
+            writeThing("Integer 0:", 0)
+            writeThing("Integer 1:", 1)
+            writeThing("Integer 1234:", 1234)
+            writeThing("Integer 123456789:", 123456789)
+            writeThing("Float 0.123:", 0.123)
+            writeThing("Array [1,2,3]:", [1, 2, 3])
 
-            socket.writeUTF("True:")
-            socket.writeObject(true)
-
-            socket.writeUTF("False:")
-            socket.writeObject(false)
-
-            socket.writeUTF("Null:")
-            socket.writeObject(null)
-            
-            socket.writeUTF("Undefined:")
-            socket.writeObject(undefined)
-
-            socket.writeUTF("Integer 0:")
-            socket.writeObject(0)
-
-            socket.writeUTF("Integer 1:")
-            socket.writeObject(1)
-
-            socket.writeUTF("Integer 1234:")
-            socket.writeObject(1234)
-
-            socket.writeUTF("Integer 123456789:")
-            socket.writeObject(123456789)
-
-            socket.writeUTF("Float 0.123:")
-            socket.writeObject(0.123)
-
-            socket.writeUTF("Array [1,2,3]:")
-            socket.writeObject([1, 2, 3])
-
-            socket.writeUTF("Array [1,2,3]:")
-            socket.writeObject([1, 2, 3])
-
-            socket.writeUTF("Mixed array [a: apple, b: banana]:")
-            var mixedArray:Array = new Array()
-            mixedArray["a"] = "apple"
-            mixedArray["b"] = "banana"
-            socket.writeObject(mixedArray)
-
-            socket.writeUTF("Mixed array 2 [1,2,3, a: apple, b: banana]:")
             var mixedArray2:Array = new Array(1,2,3)
             mixedArray2["a"] = "apple"
             mixedArray2["b"] = "banana"
-            socket.writeObject(mixedArray2)
+            writeThing("Mixed array [a: apple, b: banana]:", mixedArray2)
 
-            socket.writeUTF("Dictionary:")
-            socket.writeObject({ firstName: "John", lastName: "Smith" })
+            writeThing("Dictionary:", { firstName: "John", lastName: "Smith" })
 
-            socket.writeUTF("Empty dynamic object:")
-            socket.writeObject(new TestClasses.EmptyDynamicClass())
+            writeThing("Empty dynamic object:", new TestClasses.EmptyDynamicClass())
 
-            socket.writeUTF("Populated dynamic object:")
             var dynObj = new TestClasses.EmptyDynamicClass()
             dynObj.x = "banana"
             dynObj.y = new Array(1,2,3)
-            socket.writeObject(dynObj)
+            writeThing("Populated dynamic object:", dynObj)
 
-            socket.writeUTF("Dynamic class with static fields:")
-            socket.writeObject(new TestClasses.MixedDynamicClass())
+            writeThing("Dynamic class with static fields:", new TestClasses.MixedDynamicClass())
 
-            socket.writeUTF("Dynamic class with dynamic and static fields:")
             var dynObj2 = new TestClasses.MixedDynamicClass()
             dynObj2.m = 1.2345
             dynObj2.n = 12345678
-            socket.writeObject(dynObj2)
+            writeThing("Dynamic class with dynamic and static fields:", dynObj2)
 
-            socket.writeUTF("Sealed class:")
-            socket.writeObject(new TestClasses.SealedClass())
+            writeThing("Sealed class:", new TestClasses.SealedClass())
 
             // Write some messages that will hopefully be sent as references.
-            socket.writeUTF("Array with the same object 3 times")
-            socket.writeObject(new Array(dynObj, dynObj, dynObj))
+            writeThing("Array with the same object 3 times", new Array(dynObj, dynObj, dynObj))
 
             var cactus:String = "cactus"
-            socket.writeUTF("Same string 3 times")
-            socket.writeObject(new Array(cactus, cactus, cactus))
+            writeThing("Same string 3 times", new Array(cactus, cactus, cactus))
 
-            socket.writeUTF("Mixed strings and objects")
-            socket.writeObject(new Array(cactus, dynObj, cactus, dynObj, cactus, dynObj))
+            writeThing("Mixed strings and objects", new Array(cactus, dynObj, cactus, dynObj, cactus, dynObj))
 
             // Send an empty label to tell tcp_listener that we're finished.
-            socket.writeUTF("")
+            writeThing("", null)
 
             socket.flush()
 
-            result_text.text += "Sent test data\n"
+            log("Sent test data")
         }
 
         // Fields for incoming data
@@ -128,19 +96,19 @@
                 }
                 dataLength = socket.readInt()
                 expectingLength = false
-                result_text.text += "Expecting " + dataLength + " bytes\n"
+                log("Expecting " + dataLength + " bytes")
             }
 
             if (socket.bytesAvailable < dataLength) {
-                result_text.text += "Not enough bytes, " + socket.bytesAvailable + " available\n"
+                log("Not enough bytes, " + socket.bytesAvailable + " available")
                 return
             }
-            result_text.text += "Proceeding, there are " + socket.bytesAvailable + " available\n"
+            log("Proceeding, there are " + socket.bytesAvailable + " available")
 
             while (true) {
                 var label = socket.readUTF()
                 if (label == "") {
-                    result_text.text += "Found empty label"
+                    log("Found empty label")
                     break
                 }
 
@@ -151,7 +119,7 @@
                 else
                     objStr = obj.toString()
 
-                result_text.text += label + " " + objStr + "\n"
+                log(label + " " + objStr)
             }
 
             socket.close()
@@ -160,7 +128,7 @@
     ]]>
 
 </mx:Script>
-<mx:Button x="250" y="10" label="connect" click="connect();"/>
+<mx:Button x="250" y="10" label="start" click="start();"/>
 <mx:TextArea x="10" y="36" width="319" height="600" id="result_text"/>
 <mx:Label x="10" y="10" text="Result:"/>
 </mx:Application>
