@@ -62,8 +62,6 @@ func handle(local net.Conn) {
 		}
 		fmt.Printf("%s %x -> %v\n", label, readerSpy.data, obj)
 
-		fmt.Printf("writing label: %s\n", label)
-
 		// Write the value to our outgoing buffer.
 		amf.WriteString(outgoing, label)
 		amf.WriteValueAmf3(outgoing, obj)

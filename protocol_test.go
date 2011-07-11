@@ -128,6 +128,9 @@ func TestStrings(t *testing.T) {
 
 func TestObjects(t *testing.T) {
 
+    // Invalid object reference
+    expectReadErrorAmf3(t, "0a02")
+
 }
 
 func TestArrays(t *testing.T) {
