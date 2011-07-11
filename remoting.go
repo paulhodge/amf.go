@@ -112,7 +112,6 @@ func writeRequestArgs(stream Writer, message *AmfMessage) os.Error {
 	return nil
 }
 
-
 func decodeMessageBundle(stream Reader) (*MessageBundle, os.Error) {
 
 	cxt := amf.NewDecoder(stream, 0)

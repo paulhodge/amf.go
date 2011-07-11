@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"net"
 	"fmt"
 	"io"
@@ -10,9 +9,11 @@ import (
 
 import amf "../protocol"
 
+const listen_on = ":8081"
+
 func main() {
-	fmt.Println("listening on 8080..")
-	local, err := net.Listen("tcp", ":8080")
+	fmt.Printf("listening on %s\n", listen_on)
+	local, err := net.Listen("tcp", listen_on)
 	if local == nil {
 		fatal("cannot listen: %v", err)
 	}
@@ -42,18 +43,22 @@ func handle(local net.Conn) {
 	// Socket.mxml will send a bunch of AMF3 encoded values, each preceded by
 	// a string label.
 
-	outgoing := bytes.NewBuffer([]byte{})
+	//outgoing := bytes.NewBuffer([]byte{})
+    cxt := amf.NewDecoder(local, 3)
 
 	for {
-		label, err := amf.ReadString(local)
-		if label == "" || err != nil {
+		label := cxt.ReadString()
+		if label == "" {
 			fmt.Println("Received empty label")
 			break
 		}
+        fmt.Printf("Received label: %s\n", label)
 
+		cxt.ReadValueAmf3()
+/*
 		// Spy on the data that was read.
 		readerSpy := ReaderSpy{}
-		readerSpy.reader = local
+		cxt.stream = local
 
 		obj, err := amf.ReadValueAmf3(&readerSpy)
 		if err != nil {
@@ -65,8 +70,10 @@ func handle(local net.Conn) {
 		// Write the value to our outgoing buffer.
 		amf.WriteString(outgoing, label)
 		amf.WriteValueAmf3(outgoing, obj)
+        */
 	}
 
+/*
 	// Write all of our data, prepended with size.
 	outgoingData := outgoing.Bytes()
 	amf.WriteInt32(local, int32(len(outgoingData)))
@@ -74,6 +81,7 @@ func handle(local net.Conn) {
 
 	local.Write(outgoingData)
 	amf.WriteString(local, "")
+    */
 }
 
 func log(s string, a ...interface{}) {

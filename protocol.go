@@ -42,7 +42,7 @@ func ReadValueAmf3(stream Reader) (interface{}, os.Error) {
 	cxt := &Decoder{}
 	cxt.AmfVersion = 3
     cxt.stream = stream
-	result := cxt.readValueAmf3()
+	result := cxt.ReadValueAmf3()
 	return result, cxt.decodeError
 }
 
@@ -333,7 +333,7 @@ func (cxt *Decoder) readObjectAmf3() interface{} {
 	// Read static fields
 	object.staticFields = make([]interface{}, len(class.properties))
 	for i := range class.properties {
-		value := cxt.readValueAmf3()
+		value := cxt.ReadValueAmf3()
 		object.staticFields[i] = value
 	}
 
@@ -345,7 +345,7 @@ func (cxt *Decoder) readObjectAmf3() interface{} {
 				break
 			}
 
-			value := cxt.readValueAmf3()
+			value := cxt.ReadValueAmf3()
 			object.dynamicFields[name] = value
 		}
 	}
@@ -481,7 +481,7 @@ func (cxt *Decoder) readArrayAmf3() interface{} {
 	if key == "" {
 		result := make([]interface{}, elementCount)
 		for i := 0; i < elementCount; i++ {
-			result[i] = cxt.readValueAmf3()
+			result[i] = cxt.ReadValueAmf3()
 		}
 		return result
 	}
@@ -493,14 +493,14 @@ func (cxt *Decoder) readArrayAmf3() interface{} {
 	cxt.storeObjectInTable(result)
 
 	for key != "" {
-		result.fields[key] = cxt.readValueAmf3()
+		result.fields[key] = cxt.ReadValueAmf3()
 		key = cxt.readStringAmf3()
 	}
 
 	// Read dense elements
 	result.elements = make([]interface{}, elementCount)
 	for i := 0; i < elementCount; i++ {
-		result.elements[i] = cxt.readValueAmf3()
+		result.elements[i] = cxt.ReadValueAmf3()
 	}
 
 	return result
@@ -571,7 +571,7 @@ func (cxt *Decoder) ReadValue() interface{} {
 		return cxt.readValueAmf0()
 	}
 
-	return cxt.readValueAmf3()
+	return cxt.ReadValueAmf3()
 }
 
 func (cxt *Decoder) readValueAmf0() interface{} {
@@ -621,14 +621,14 @@ func (cxt *Decoder) readValueAmf0() interface{} {
 	case amf0_xmlObjectType:
 	case amf0_typedObjectType:
 	case amf0_avmPlusObjectType:
-		return cxt.readValueAmf3()
+		return cxt.ReadValueAmf3()
 	}
 
 	fmt.Printf("AMF0 type marker was not supported: %d", typeMarker)
 	return nil
 }
 
-func (cxt *Decoder) readValueAmf3() interface{} {
+func (cxt *Decoder) ReadValueAmf3() interface{} {
 
 	// Read type marker
 	typeMarker := cxt.ReadByte()
