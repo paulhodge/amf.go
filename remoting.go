@@ -1,11 +1,12 @@
 package amf
 
 import (
-    "bytes"
-    "fmt"
-    "http"
-    "os"
-    "strconv"
+	"bytes"
+	"fmt"
+	"http"
+	"io"
+	"os"
+	"strconv"
 )
 
 import amf "./protocol"
@@ -14,23 +15,23 @@ import amf "./protocol"
 func unused(a ...interface{}) {}
 
 type FlexAbstractMessage struct {
-    Body []byte
-    ClientId string
-    Destination string
-    Headers map[string]interface{}
-    MessageId string
-    Timestamp int
-    TimeToLive int
+	Body        []byte
+	ClientId    string
+	Destination string
+	Headers     map[string]interface{}
+	MessageId   string
+	Timestamp   int
+	TimeToLive  int
 }
 
 type FlexAsyncMessage struct {
-    AbstractMessage FlexAbstractMessage
-    CorrelationId string
+	AbstractMessage FlexAbstractMessage
+	CorrelationId   string
 }
 
 type FlexCommandMessage struct {
-    AsyncMessage FlexAsyncMessage
-    Operation uint
+	AsyncMessage FlexAsyncMessage
+	Operation    uint
 }
 
 type FlexRemotingMessage struct {
@@ -39,17 +40,17 @@ type FlexRemotingMessage struct {
 }
 
 type FlexAcknowledgeMessage struct {
-    AsyncMessage FlexAsyncMessage
-	flags byte
+	AsyncMessage FlexAsyncMessage
+	flags        byte
 }
 
 type FlexErrorMessage struct {
-    AcknowledgeMessage FlexAcknowledgeMessage
-	ExtendedData string
-	FaultCode    int
-	FaultDetail  int
-	FaultString  string
-	RootCause    string
+	AcknowledgeMessage FlexAcknowledgeMessage
+	ExtendedData       string
+	FaultCode          int
+	FaultDetail        int
+	FaultString        string
+	RootCause          string
 }
 
 type MessageBundle struct {
@@ -71,7 +72,7 @@ type AmfMessage struct {
 }
 
 
-func readRequestArgs(stream Reader, cxt *amf.Decoder) []interface{} {
+func readRequestArgs(stream io.Reader, cxt *amf.Decoder) []interface{} {
 	/*
 	   lookaheadByte := peekByte(stream)
 	   if lookaheadByte == 17 {
@@ -102,24 +103,24 @@ func readRequestArgs(stream Reader, cxt *amf.Decoder) []interface{} {
 	return result
 }
 
-func writeRequestArgs(stream Writer, message *AmfMessage) os.Error {
+func writeRequestArgs(cxt *amf.Encoder, message *AmfMessage) os.Error {
 
-	writeUint32(stream, uint32(len(message.args)))
+	cxt.WriteUint32(uint32(len(message.args)))
 
 	for _, arg := range message.args {
-		WriteValueAmf3(stream, arg)
+		cxt.WriteValueAmf3(arg)
 	}
 	return nil
 }
 
-func decodeMessageBundle(stream Reader) (*MessageBundle, os.Error) {
+func DecodeMessageBundle(stream io.Reader) (*MessageBundle, os.Error) {
 
 	cxt := amf.NewDecoder(stream, 0)
 
 	amfVersion := cxt.ReadUint16()
 
 	result := MessageBundle{}
-    cxt.AmfVersion = amfVersion
+	cxt.AmfVersion = amfVersion
 	result.amfVersion = amfVersion
 
 	fmt.Printf("amfVersion = %d\n", cxt.AmfVersion)
@@ -217,26 +218,26 @@ func decodeMessageBundle(stream Reader) (*MessageBundle, os.Error) {
 	return &result, nil
 }
 
-func encodeBundle(stream Writer, bundle *MessageBundle) os.Error {
-	writeUint16(stream, bundle.amfVersion)
+func encodeBundle(cxt *amf.Encoder, bundle *MessageBundle) os.Error {
+	cxt.WriteUint16(bundle.amfVersion)
 
 	// Write headers
-	writeUint16(stream, uint16(len(bundle.headers)))
+	cxt.WriteUint16(uint16(len(bundle.headers)))
 	for _, header := range bundle.headers {
-		amf.WriteString(stream, header.name)
-		writeBool(stream, header.mustUnderstand)
+		cxt.WriteString(header.name)
+		cxt.WriteBool(header.mustUnderstand)
 	}
 
 	// Write messages
-	writeUint16(stream, uint16(len(bundle.messages)))
+	cxt.WriteUint16(uint16(len(bundle.messages)))
 	for _, message := range bundle.messages {
-		amf.WriteString(stream, message.targetUri)
-		amf.WriteString(stream, message.responseUri)
-		writeUint32(stream, 0)
+		cxt.WriteString(message.targetUri)
+		cxt.WriteString(message.responseUri)
+		cxt.WriteUint32(0)
 
-		writeRequestArgs(stream, &message)
+		writeRequestArgs(cxt, &message)
 
-		WriteValueAmf3(stream, message.body)
+		cxt.WriteValueAmf3(message.body)
 	}
 
 	return nil
@@ -260,7 +261,6 @@ func writeReply500(w http.ResponseWriter) {
 }
 
 
-
 func handler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "Get" {
 		handleGet(w)
@@ -268,7 +268,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Decode the request
-	requestBundle, _ := decodeMessageBundle(r.Body)
+	requestBundle, _ := DecodeMessageBundle(r.Body)
 
 	// Initialize the reply bundle.
 	replyBundle := MessageBundle{}
@@ -307,7 +307,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	// Encode the outgoing message bundle.
 	replyBuffer := bytes.NewBuffer(make([]byte, 0))
-	encodeBundle(replyBuffer, &replyBundle)
+	encoder := amf.NewEncoder(replyBuffer)
+	encodeBundle(encoder, &replyBundle)
 	replyBytes := replyBuffer.Bytes()
 	w.Write(replyBytes)
 

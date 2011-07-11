@@ -44,7 +44,7 @@ func handle(local net.Conn) {
 	// a string label.
 
 	//outgoing := bytes.NewBuffer([]byte{})
-    cxt := amf.NewDecoder(local, 3)
+	cxt := amf.NewDecoder(local, 3)
 
 	for {
 		label := cxt.ReadString()
@@ -52,36 +52,36 @@ func handle(local net.Conn) {
 			fmt.Println("Received empty label")
 			break
 		}
-        fmt.Printf("Received label: %s\n", label)
+		fmt.Printf("Received label: %s\n", label)
 
 		cxt.ReadValueAmf3()
-/*
-		// Spy on the data that was read.
-		readerSpy := ReaderSpy{}
-		cxt.stream = local
+		/*
+			// Spy on the data that was read.
+			readerSpy := ReaderSpy{}
+			cxt.stream = local
 
-		obj, err := amf.ReadValueAmf3(&readerSpy)
-		if err != nil {
-			fmt.Printf("%v\n", err)
-			break
-		}
-		fmt.Printf("%s %x -> %v\n", label, readerSpy.data, obj)
+			obj, err := amf.ReadValueAmf3(&readerSpy)
+			if err != nil {
+				fmt.Printf("%v\n", err)
+				break
+			}
+			fmt.Printf("%s %x -> %v\n", label, readerSpy.data, obj)
 
-		// Write the value to our outgoing buffer.
-		amf.WriteString(outgoing, label)
-		amf.WriteValueAmf3(outgoing, obj)
-        */
+			// Write the value to our outgoing buffer.
+			amf.WriteString(outgoing, label)
+			amf.WriteValueAmf3(outgoing, obj)
+		*/
 	}
 
-/*
-	// Write all of our data, prepended with size.
-	outgoingData := outgoing.Bytes()
-	amf.WriteInt32(local, int32(len(outgoingData)))
-	fmt.Printf("sending %d bytes\n", len(outgoingData))
+	/*
+		// Write all of our data, prepended with size.
+		outgoingData := outgoing.Bytes()
+		amf.WriteInt32(local, int32(len(outgoingData)))
+		fmt.Printf("sending %d bytes\n", len(outgoingData))
 
-	local.Write(outgoingData)
-	amf.WriteString(local, "")
-    */
+		local.Write(outgoingData)
+		amf.WriteString(local, "")
+	*/
 }
 
 func log(s string, a ...interface{}) {

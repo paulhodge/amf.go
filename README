@@ -3,5 +3,13 @@ amf.go
 
 A Go library for using Adobe's AMF (Action Message Format)
 
+Here's more information on Action Message Format:
 
-This library is a work in progress
+    http://en.wikipedia.org/wiki/Action_Message_Format
+
+This library can be used either as a binary protocol (such as with a flex.net.Socket),
+or as a full-blown server gateway for Flex remoting (such as with mx.messaging.*)
+
+# Current Status #
+
+The library is still a work in progress.
