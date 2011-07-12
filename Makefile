@@ -1,11 +1,9 @@
 include $(GOROOT)/src/Make.inc
 
-TARG=amv
+TARG=amf
+
 GOFILES=\
 	protocol.go\
 	remoting.go\
-
-all:
-	6g protocol.go
 
 include $(GOROOT)/src/Make.pkg

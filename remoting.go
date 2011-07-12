@@ -20,8 +20,8 @@ type FlexAbstractMessage struct {
 	Destination string
 	Headers     map[string]interface{}
 	MessageId   string
-	Timestamp   int
-	TimeToLive  int
+	Timestamp   uint32
+	TimeToLive  uint32
 }
 
 type FlexAsyncMessage struct {
@@ -35,8 +35,17 @@ type FlexCommandMessage struct {
 }
 
 type FlexRemotingMessage struct {
-	operation string
-	source    string
+    // AbstractMessage:
+	Body        []interface{}
+	ClientId    string
+	Destination string
+	Headers     map[string]interface{}
+	MessageId   string
+	Timestamp   uint32
+	TimeToLive  uint32
+
+	Operation string
+	Source    string
 }
 
 type FlexAcknowledgeMessage struct {
@@ -54,21 +63,20 @@ type FlexErrorMessage struct {
 }
 
 type MessageBundle struct {
-	amfVersion uint16
-	headers    []AmfHeader
-	messages   []AmfMessage
+	AmfVersion uint16
+	Headers    []AmfHeader
+	Messages   []AmfMessage
 }
 
 type AmfHeader struct {
-	name           string
-	mustUnderstand bool
-	value          interface{}
+	Name           string
+	MustUnderstand bool
+	Value          interface{}
 }
 type AmfMessage struct {
-	targetUri   string
-	responseUri string
-	args        []interface{}
-	body        interface{}
+	TargetUri   string
+	ResponseUri string
+	Body        interface{}
 }
 
 
@@ -103,27 +111,16 @@ func readRequestArgs(stream io.Reader, cxt *amf.Decoder) []interface{} {
 	return result
 }
 
-func writeRequestArgs(cxt *amf.Encoder, message *AmfMessage) os.Error {
-
-	cxt.WriteUint32(uint32(len(message.args)))
-
-	for _, arg := range message.args {
-		cxt.WriteValueAmf3(arg)
-	}
-	return nil
-}
-
 func DecodeMessageBundle(stream io.Reader) (*MessageBundle, os.Error) {
 
 	cxt := amf.NewDecoder(stream, 0)
+    cxt.RegisterType("flex.messaging.messages.RemotingMessage", FlexRemotingMessage{})
 
 	amfVersion := cxt.ReadUint16()
 
 	result := MessageBundle{}
 	cxt.AmfVersion = amfVersion
-	result.amfVersion = amfVersion
-
-	fmt.Printf("amfVersion = %d\n", cxt.AmfVersion)
+	result.AmfVersion = amfVersion
 
 	/*
 	   From http://osflash.org/documentation/amf/envelopes/remoting:
@@ -144,8 +141,6 @@ func DecodeMessageBundle(stream io.Reader) (*MessageBundle, os.Error) {
 
 	headerCount := cxt.ReadUint16()
 
-	fmt.Printf("headerCount = %d\n", headerCount)
-
 	/*
 	   From http://osflash.org/documentation/amf/envelopes/remoting:
 
@@ -158,7 +153,7 @@ func DecodeMessageBundle(stream io.Reader) (*MessageBundle, os.Error) {
 	*/
 
 	// Read headers
-	result.headers = make([]AmfHeader, headerCount)
+	result.Headers = make([]AmfHeader, headerCount)
 	for i := 0; i < int(headerCount); i++ {
 		name := cxt.ReadString()
 		mustUnderstand := cxt.ReadUint8() != 0
@@ -169,7 +164,7 @@ func DecodeMessageBundle(stream io.Reader) (*MessageBundle, os.Error) {
 
 		value := cxt.ReadValue()
 		header := AmfHeader{name, mustUnderstand, value}
-		result.headers[i] = header
+		result.Headers[i] = header
 
 		fmt.Printf("Read header, name = %s", name)
 	}
@@ -188,29 +183,37 @@ func DecodeMessageBundle(stream io.Reader) (*MessageBundle, os.Error) {
 
 	// Read message bodies
 	messageCount := cxt.ReadUint16()
-	fmt.Printf("messageCount = %d\n", messageCount)
-	result.messages = make([]AmfMessage, messageCount)
+	result.Messages = make([]AmfMessage, messageCount)
 
 	for i := 0; i < int(messageCount); i++ {
 		// TODO: Should reset object tables here
 
-		message := &result.messages[i]
+		message := &result.Messages[i]
 
-		message.targetUri = cxt.ReadString()
-		message.responseUri = cxt.ReadString()
+		message.TargetUri = cxt.ReadString()
+		message.ResponseUri = cxt.ReadString()
 
 		messageLength := cxt.ReadUint32()
 
-		fmt.Printf("Read targetUri = %s\n", message.targetUri)
-		fmt.Printf("Read responseUri = %s\n", message.responseUri)
-		fmt.Printf("Read messageLength = %d\n", messageLength)
+        is_request := true
 
-		is_request := true
+        // TODO: Check targetUri to see if this isn't an array?
+
 		if is_request {
-			readRequestArgs(stream, cxt)
-		}
-
-		message.body = cxt.ReadValue()
+            // Read an array, however this array is strange because it doesn't use
+            // the reference bit.
+            typeCode := cxt.ReadUint8()
+            unused(typeCode)
+            ref := cxt.ReadUint32()
+            itemCount := int(ref)
+            args := make([]interface{}, itemCount)
+            for i := 0; i < itemCount; i++ {
+                args[i] = cxt.ReadValue()
+            }
+            message.Body = args
+		} else {
+            message.Body = cxt.ReadValue()
+        }
 
 		unused(messageLength)
 	}
@@ -219,25 +222,23 @@ func DecodeMessageBundle(stream io.Reader) (*MessageBundle, os.Error) {
 }
 
 func encodeBundle(cxt *amf.Encoder, bundle *MessageBundle) os.Error {
-	cxt.WriteUint16(bundle.amfVersion)
+	cxt.WriteUint16(bundle.AmfVersion)
 
 	// Write headers
-	cxt.WriteUint16(uint16(len(bundle.headers)))
-	for _, header := range bundle.headers {
-		cxt.WriteString(header.name)
-		cxt.WriteBool(header.mustUnderstand)
+	cxt.WriteUint16(uint16(len(bundle.Headers)))
+	for _, header := range bundle.Headers {
+		cxt.WriteString(header.Name)
+		cxt.WriteBool(header.MustUnderstand)
 	}
 
 	// Write messages
-	cxt.WriteUint16(uint16(len(bundle.messages)))
-	for _, message := range bundle.messages {
-		cxt.WriteString(message.targetUri)
-		cxt.WriteString(message.responseUri)
+	cxt.WriteUint16(uint16(len(bundle.Messages)))
+	for _, message := range bundle.Messages {
+		cxt.WriteString(message.TargetUri)
+		cxt.WriteString(message.ResponseUri)
 		cxt.WriteUint32(0)
 
-		writeRequestArgs(cxt, &message)
-
-		cxt.WriteValueAmf3(message.body)
+		cxt.WriteValueAmf3(message.Body)
 	}
 
 	return nil
@@ -261,26 +262,30 @@ func writeReply500(w http.ResponseWriter) {
 }
 
 
-func handler(w http.ResponseWriter, r *http.Request) {
+func HttpHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "Get" {
 		handleGet(w)
 		return
 	}
+
+    bits := make([]byte, 3024)
+    n,_ := r.Body.Read(bits)
+    fmt.Printf("body = %x\n", bits[0:n])
 
 	// Decode the request
 	requestBundle, _ := DecodeMessageBundle(r.Body)
 
 	// Initialize the reply bundle.
 	replyBundle := MessageBundle{}
-	replyBundle.amfVersion = 3
-	replyBundle.messages = make([]AmfMessage, len(requestBundle.messages))
+	replyBundle.AmfVersion = 3
+	replyBundle.Messages = make([]AmfMessage, len(requestBundle.Messages))
 
 	// Construct a reply to each message.
-	for index, request := range requestBundle.messages {
-		reply := &replyBundle.messages[index]
+	for index, request := range requestBundle.Messages {
+		reply := &replyBundle.Messages[index]
 
 		replyBody, success := amfMessageHandler(request)
-		reply.body = replyBody
+		reply.Body = replyBody
 
 		/*
 		   From http://osflash.org/documentation/amf/envelopes/remoting:
@@ -297,12 +302,12 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		*/
 
 		if success {
-			reply.targetUri = request.targetUri + "/onResult"
+			reply.TargetUri = request.TargetUri + "/onResult"
 		} else {
-			reply.targetUri = request.targetUri + "/onStatus"
+			reply.TargetUri = request.TargetUri + "/onStatus"
 		}
-		reply.responseUri = ""
-		fmt.Printf("writing reply to message %d, targetUri = %s", index, reply.targetUri)
+		reply.ResponseUri = ""
+		fmt.Printf("writing reply to message %d, targetUri = %s", index, reply.TargetUri)
 	}
 
 	// Encode the outgoing message bundle.
@@ -323,7 +328,7 @@ func amfMessageHandler(request AmfMessage) (data interface{}, success bool) {
 	return "hello", true
 }
 
-func main() {
-	http.HandleFunc("/", handler)
-	http.ListenAndServe(":8080", nil)
+func ServeHttp() {
+	http.HandleFunc("/", HttpHandler)
+	http.ListenAndServe(":8082", nil)
 }

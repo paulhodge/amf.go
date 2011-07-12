@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+    "strings"
 )
 
 type Reader interface {
@@ -100,12 +101,17 @@ type Decoder struct {
 	objectTable []interface{}
 
 	decodeError os.Error
+
+    // When unpacking objects, we'll look in this map for the type name. If found,
+    // we'll unpack the value into an instance of the associated type.
+    typeMap map[string] reflect.Type
 }
 
 func NewDecoder(stream Reader, amfVersion uint16) *Decoder {
 	decoder := &Decoder{}
 	decoder.stream = stream
 	decoder.AmfVersion = amfVersion
+    decoder.typeMap = make(map[string] reflect.Type)
 	return decoder
 }
 
@@ -127,6 +133,9 @@ func (cxt *Decoder) errored() bool {
 }
 func (cxt *Decoder) storeObjectInTable(obj interface{}) {
 	cxt.objectTable = append(cxt.objectTable, obj)
+}
+func (cxt *Decoder) RegisterType(flexName string, instance interface{}) {
+    cxt.typeMap[flexName] = reflect.TypeOf(instance)
 }
 
 // Helper functions.
@@ -329,7 +338,30 @@ func (cxt *Decoder) readObjectAmf3() interface{} {
 
 	object := AvmObject{}
 	object.class = class
+
+    // For an anonymous class, just return a map[string] interface{}
+    if object.class.name == "" {
+        result := make(map[string]interface{})
+        for prop := range class.properties {
+            value := cxt.ReadValueAmf3()
+            object.staticFields[prop] = value
+        }
+        if class.dynamic {
+            for {
+                name := cxt.readStringAmf3()
+                if name == "" {
+                    break
+                }
+                value := cxt.ReadValueAmf3()
+                result[name] = value
+            }
+        }
+        return result
+    }
+
 	object.dynamicFields = make(map[string]interface{})
+
+    fmt.Printf("AvmObject class name: %s\n", class.name)
 
 	// Store the object in the table before doing any decoding.
 	cxt.storeObjectInTable(&object)
@@ -340,6 +372,9 @@ func (cxt *Decoder) readObjectAmf3() interface{} {
 		value := cxt.ReadValueAmf3()
 		object.staticFields[i] = value
 	}
+
+    fmt.Printf("static fields = %v\n", object.staticFields)
+    fmt.Printf("static fields = %v\n", class.properties)
 
 	if class.dynamic {
 		// Parse dynamic fields
@@ -354,7 +389,26 @@ func (cxt *Decoder) readObjectAmf3() interface{} {
 		}
 	}
 
-	return &object
+    // If this type is registered, then unpack this result into an instance of the type.
+    // TODO: This could be faster if we didn't create an intermediate AvmObject.
+    goType, foundGoType := cxt.typeMap[class.name]
+
+    if foundGoType {
+        result := reflect.Indirect(reflect.New(goType))
+        for i := 0; i < len(class.properties); i++ {
+            value := reflect.ValueOf(object.staticFields[i])
+            fieldName := class.properties[i]
+            // The Go type will have field names with capital letters
+            fieldName = strings.ToUpper(fieldName[:1]) + fieldName[1:]
+            field := result.FieldByName(fieldName)
+            fmt.Printf("Attempting to write %v to field %v\n", object.staticFields[i],
+                class.properties[i])
+            field.Set(value)
+        }
+        return result.Interface()
+    }
+
+	return object
 }
 
 func (cxt *Encoder) writeObjectAmf3(value interface{}) os.Error {
@@ -431,6 +485,8 @@ func (cxt *Decoder) readClassDefinitionAmf3(ref uint32) *AvmClass {
 
 	// Save the new class in the loopup table
 	cxt.classTable = append(cxt.classTable, &class)
+
+    fmt.Printf("read class name = %s\n", class.name)
 
 	return &class
 }

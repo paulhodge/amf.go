@@ -1,3 +1,4 @@
+
 package amf
 
 import (
@@ -6,12 +7,11 @@ import (
 	"fmt"
 	"testing"
 )
-import amf "./protocol"
 
 func testReadAmf3(t *testing.T, blobStr string, expectedStr string) {
 	blob, _ := hex.DecodeString(blobStr)
 	reader := bytes.NewBuffer(blob)
-	val, err := amf.ReadValueAmf3(reader)
+	val, err := ReadValueAmf3(reader)
 	valStr := fmt.Sprintf("%v", val)
 
 	if valStr != expectedStr {
@@ -34,7 +34,7 @@ func testWriteAmf3(t *testing.T, value interface{}, expectedBlob string) {
 	expectedBytes, _ := hex.DecodeString(expectedBlob)
 	writer := bytes.NewBuffer(make([]byte, 0, 1))
 
-	err := amf.WriteValueAmf3(writer, value)
+	err := WriteValueAmf3(writer, value)
 
 	resultBytes := writer.Bytes()
 	if bytes.Compare(expectedBytes, resultBytes) != 0 {
@@ -50,7 +50,7 @@ func testWriteAmf3(t *testing.T, value interface{}, expectedBlob string) {
 func expectReadErrorAmf3(t *testing.T, blobStr string) {
 	blob, _ := hex.DecodeString(blobStr)
 	reader := bytes.NewBuffer(blob)
-	_, err := amf.ReadValueAmf3(reader)
+	_, err := ReadValueAmf3(reader)
 
 	if err == nil {
 		t.Errorf("Expected error but err == nil, for blob: %s", blobStr)
