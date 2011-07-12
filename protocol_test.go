@@ -1,4 +1,3 @@
-
 package amf
 
 import (
